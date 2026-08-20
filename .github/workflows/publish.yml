@@ -1,0 +1,57 @@
+name: Publish release
+
+# Fires when the private source repository pushes a tag here.
+#
+# The whole point of this file is that it runs in THIS repository, so it can use the automatic
+# GITHUB_TOKEN and no long-lived credential is needed to create a release. The source repository
+# reaches this repository over SSH with a deploy key, which — unlike a personal access token — does
+# not expire, is scoped to this one repository, and can do nothing but write here.
+#
+# (A push authenticated with GITHUB_TOKEN would not trigger a workflow; one authenticated with a
+# deploy key does. That difference is what makes this arrangement work at all.)
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The artifact is committed under dist/ by the source repository in the same push that
+      # created the tag, so it is already present in this checkout.
+      - name: Check the artifact arrived
+        run: |
+          set -euo pipefail
+          test -f dist/n8n-chatbot.zip || { echo "::error::dist/n8n-chatbot.zip is missing"; exit 1; }
+          test -f dist/SHA256SUMS     || { echo "::error::dist/SHA256SUMS is missing"; exit 1; }
+
+          # Verify the zip against the checksum built alongside it, so a truncated or corrupted push
+          # fails here rather than being installed on client sites.
+          cd dist && sha256sum -c SHA256SUMS
+
+          # Non-empty, correct top-level folder. Client sites install this blind.
+          unzip -Z1 n8n-chatbot.zip | cut -d/ -f1 | sort -u | grep -qx 'n8n-chatbot' \
+            || { echo "::error::zip does not have a single n8n-chatbot/ top-level folder"; exit 1; }
+
+      - name: Create the release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: |
+            Build artifact for n8n Chatbot Widget ${{ github.ref_name }}.
+
+            This repository is the plugin's update channel and holds no source. Verify with:
+
+            ```
+            shasum -a 256 -c SHA256SUMS
+            ```
+          files: |
+            dist/n8n-chatbot.zip
+            dist/SHA256SUMS
